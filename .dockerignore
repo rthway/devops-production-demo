@@ -1,0 +1,40 @@
+# Keep the build context small and, more importantly, keep secrets and local
+# state out of the image entirely. Anything matched here cannot leak into a
+# layer even if a later COPY is careless.
+.git
+.gitignore
+.github
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.sqlite3
+*.db
+terraform/**/.terraform
+terraform/**/*.tfstate*
+terraform/**/*.tfvars
+!terraform/**/*.tfvars.example
+k8s/**/secret.yaml
+docs
+*.md
+!README.md
+Makefile
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+monitoring
+helm

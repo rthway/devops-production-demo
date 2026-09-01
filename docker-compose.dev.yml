@@ -1,0 +1,50 @@
+# Development overlay. Applied on top of the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# A separate file rather than a profile, so nothing in it can be switched on
+# accidentally in a non-development environment.
+
+services:
+  api:
+    environment:
+      APP_ENVIRONMENT: local
+      APP_DEBUG: "true"
+      APP_LOG_JSON: "false"
+      APP_LOG_LEVEL: DEBUG
+    # Source is bind-mounted and uvicorn reloads on change, so the loop is
+    # edit-save-refresh instead of edit-rebuild-restart.
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic:ro
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+    ports:
+      - "${API_PORT:-8000}:8000"
+    # --reload needs to write bytecode and watcher state, so the read-only
+    # root filesystem from the base file is relaxed here and only here.
+    read_only: false
+
+  db:
+    # Published so psql, DBeaver and the integration tests can reach it.
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  # Adminer is handy locally and has no business existing anywhere else --
+  # which is exactly why it lives in the dev overlay.
+  adminer:
+    image: adminer:4.8.1-standalone
+    container_name: dpd-adminer
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"
+    networks: [backend]
