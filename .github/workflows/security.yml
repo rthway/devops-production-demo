@@ -1,0 +1,199 @@
+name: Security
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Weekly. A dependency that was clean when merged does not stay clean --
+    # new CVEs are published against code that has not changed.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  sast:
+    name: Bandit (SAST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Bandit
+        run: pip install "bandit[toml]>=1.7"
+
+      - name: Run Bandit
+        # Fails the build on medium severity and above. Anything intentionally
+        # allowed carries an inline `# nosec` with a written justification --
+        # a blanket skip list in config would hide the reasoning.
+        run: bandit -c pyproject.toml -r app --severity-level medium --confidence-level medium
+
+      - name: Bandit report artifact
+        if: always()
+        run: bandit -c pyproject.toml -r app -f json -o bandit-report.json || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  dependencies:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pip-audit
+
+      - name: pip-audit
+        # Audits what is actually installed, transitive dependencies included.
+        # Auditing only the declared direct dependencies misses most CVEs,
+        # which almost always land a level or two down the tree.
+        run: pip-audit --strict --desc
+
+  # ---------------------------------------------------------------------------
+  filesystem-scan:
+    name: Trivy (filesystem)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem and config scan
+        # Pinned to a commit SHA, not a tag. A tag can be moved; a security
+        # scanner is exactly the kind of action where a moved tag is a
+        # supply-chain compromise.
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0" # report first; the image scan below is the gate
+
+      - name: Upload to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  # ---------------------------------------------------------------------------
+  image-scan:
+    name: Trivy (container image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Loaded into the local daemon, never pushed. An image is scanned
+          # before it can be published, not after.
+          load: true
+          push: false
+          tags: scan-target:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.24.0
+        with:
+          scan-type: image
+          image-ref: scan-target:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          # This one is a gate: a HIGH or CRITICAL in the runtime image fails
+          # the build. `ignore-unfixed` because failing on a CVE with no
+          # available patch gives a team no action to take, and a check nobody
+          # can act on is a check everyone learns to ignore.
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: Gitleaks (secret scanning)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret that was committed and later "removed" in a
+          # follow-up commit is still in the repository forever, and a shallow
+          # clone would not see it.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality goes beyond the default security-only pack.
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
