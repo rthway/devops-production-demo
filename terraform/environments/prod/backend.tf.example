@@ -1,0 +1,32 @@
+# Rename to backend.tf and run `terraform init -migrate-state`.
+#
+# Committed as .example because the bucket and table names are account
+# specific, and because a backend block pointing at someone else's bucket is
+# worse than no backend block at all.
+#
+# Local state is unacceptable for anything shared: it lives on one laptop, has
+# no locking, and contains every secret the configuration touches in plain
+# text.
+terraform {
+  backend "s3" {
+    bucket = "CHANGE-ME-tfstate-ap-south-1"
+
+    # The key is what separates environments. dev and prod use different keys
+    # AND ideally different buckets, so a credential scoped to dev cannot read
+    # or write prod state.
+    key    = "devops-production-demo/prod/terraform.tfstate"
+    region = "ap-south-1"
+
+    # State contains secrets. Encrypt at rest with a customer-managed key so
+    # access is auditable and revocable.
+    encrypt    = true
+    kms_key_id = "arn:aws:kms:ap-south-1:CHANGE-ME:key/CHANGE-ME"
+
+    # Locking. Without it, two concurrent applies interleave and corrupt
+    # state -- which is the single worst failure mode Terraform has.
+    # Terraform 1.10+ supports native S3 locking; DynamoDB remains the
+    # compatible choice for older versions.
+    use_lockfile   = true
+    dynamodb_table = "terraform-locks"
+  }
+}
