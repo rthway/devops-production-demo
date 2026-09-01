@@ -1,0 +1,74 @@
+# --- secrets and local config (the important half of this file) -------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+credentials
+credentials.*
+secrets.*
+secret.yaml
+!secret.example.yaml
+*.kubeconfig
+kubeconfig
+
+# --- terraform --------------------------------------------------------------
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored. It pins provider
+# versions and their hashes, so committing it is what makes `terraform init`
+# reproducible across machines and CI.
+
+# --- python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+
+# --- test and tooling caches ------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit.xml
+bandit-report.json
+trivy-results.sarif
+
+# --- databases and dumps ----------------------------------------------------
+*.sqlite3
+*.db
+*.sql.gz
+*.dump
+
+# --- editors and OS ---------------------------------------------------------
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- helm -------------------------------------------------------------------
+helm/**/charts/
+*.tgz
