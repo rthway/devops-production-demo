@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: devops-demo
+  labels:
+    app.kubernetes.io/name: devops-production-demo
+spec:
+  # minAvailable: 1 rather than maxUnavailable: 0 -- the latter would block
+  # node drains entirely, so cluster upgrades could never complete. This
+  # allows voluntary disruption while guaranteeing the service never reaches
+  # zero replicas during a drain.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devops-production-demo
+      app.kubernetes.io/component: api

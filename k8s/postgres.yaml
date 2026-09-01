@@ -1,0 +1,129 @@
+# PostgreSQL for a demo cluster.
+#
+# In a real production system this would be a managed service (RDS, Cloud SQL,
+# Azure Database) or an operator such as CloudNativePG -- backups, PITR,
+# failover and major-version upgrades are the hard parts, and none of them are
+# solved by a StatefulSet. This exists so the manifests are self-contained and
+# the storage/identity decisions are visible.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: devops-demo
+  labels:
+    app.kubernetes.io/name: devops-production-demo
+    app.kubernetes.io/component: database
+spec:
+  # Headless (clusterIP: None): a StatefulSet needs stable per-pod DNS
+  # (postgres-0.postgres...), which a normal virtual IP Service does not give.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: devops-production-demo
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: devops-demo
+  labels:
+    app.kubernetes.io/name: devops-production-demo
+    app.kubernetes.io/component: database
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devops-production-demo
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: devops-production-demo
+        app.kubernetes.io/component: database
+    spec:
+      # StatefulSet, not Deployment: stable network identity and a persistent
+      # volume bound to the pod's ordinal. A Deployment would give the
+      # database a random name and could attach the wrong volume on
+      # reschedule -- or, with a ReadWriteOnce volume, none at all.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999          # the postgres user in the official image
+        runAsGroup: 999
+        fsGroup: 999            # makes the mounted volume group-writable
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: app
+            - name: POSTGRES_DB
+              value: app
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: POSTGRES_PASSWORD
+            # The image initialises the data directory at the mount root by
+            # default, which collides with lost+found on some volume types.
+            # A subdirectory avoids that entirely.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--auth-host=scram-sha-256"
+          readinessProbe:
+            exec:
+              # -U and -d matter: bare pg_isready probes the wrong role and
+              # can report ready before the application's database exists.
+              command: ["pg_isready", "-U", "app", "-d", "app"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "app", "-d", "app"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # NOT readOnlyRootFilesystem: Postgres writes its socket, lock
+            # files and stats outside the data volume. Claiming otherwise
+            # would produce a manifest that looks hardened and does not start.
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    # A template, not a static PVC: each replica gets its own volume, and the
+    # volume survives the pod being deleted or rescheduled.
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: devops-production-demo
+          app.kubernetes.io/component: database
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

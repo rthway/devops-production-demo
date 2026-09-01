@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate-1-0-0
+  namespace: devops-demo
+  labels:
+    app.kubernetes.io/name: devops-production-demo
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 3
+  # Jobs are immutable, so the name carries the release version and CI
+  # generates a new one per deploy. ttlSecondsAfterFinished cleans up so the
+  # namespace does not accumulate a Job object per release forever.
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: devops-production-demo
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: api
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: ghcr.io/rthway/devops-production-demo:1.0.0
+          # A Job, not an initContainer: an initContainer runs once per pod,
+          # so N replicas would race to migrate the same database on every
+          # rollout. A Job runs exactly once per release. Alembic's version
+          # table makes it safe to re-run, but "safe to re-run" is not the
+          # same as "correct to run concurrently".
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
