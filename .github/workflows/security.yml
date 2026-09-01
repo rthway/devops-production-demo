@@ -77,7 +77,21 @@ jobs:
         # Audits what is actually installed, transitive dependencies included.
         # Auditing only the declared direct dependencies misses most CVEs,
         # which almost always land a level or two down the tree.
-        run: pip-audit --strict --desc
+        #
+        # The freeze step is not incidental. This project is installed
+        # editable, and an unpublished local package cannot be looked up on
+        # PyPI -- under --strict that fails the job permanently, whether or
+        # not a real CVE exists, which is how a security check becomes noise
+        # everyone learns to skip. `--skip-editable` does not help: --strict
+        # fails on ANY skipped dependency, editable ones included.
+        #
+        # Freezing with --exclude-editable and auditing the result keeps
+        # --strict meaningful: every third-party package is audited, and
+        # nothing is silently skipped.
+        run: |
+          pip freeze --exclude-editable > requirements-audit.txt
+          echo "auditing $(wc -l < requirements-audit.txt) packages"
+          pip-audit --strict --desc -r requirements-audit.txt
 
   # ---------------------------------------------------------------------------
   filesystem-scan:

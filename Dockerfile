@@ -22,8 +22,15 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install .
+# The build toolchain is pinned so two builds of the same commit resolve the
+# same pip/setuptools/wheel. The application's own dependencies are already
+# constrained in pyproject.toml, which is the "requirements file" DL3013 asks
+# for -- hence --no-cache-dir here and the targeted ignore in .hadolint.yaml.
+RUN pip install --no-cache-dir \
+        pip==26.2.1 \
+        setuptools==84.0.0 \
+        wheel==0.48.0 \
+    && pip install --no-cache-dir .
 
 COPY app ./app
 COPY alembic ./alembic
@@ -71,8 +78,11 @@ EXPOSE 8000
 
 # Points at the liveness endpoint on purpose -- it must not depend on the
 # database, or Docker would mark a recoverable dependency outage as unhealthy.
+# Exec form, not shell form. The trailing `|| exit 1` was redundant -- a
+# non-zero exit from curl already marks the container unhealthy -- and it was
+# the only thing that required a shell here.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8000/health/live || exit 1
+    CMD ["curl", "-fsS", "http://127.0.0.1:8000/health/live"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
