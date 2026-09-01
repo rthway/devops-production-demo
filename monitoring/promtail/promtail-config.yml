@@ -1,0 +1,67 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Docker service discovery, filtered to this Compose project.
+  #
+  # The obvious alternative -- globbing /var/lib/docker/containers/*/*-json.log
+  # -- tails every container on the host, including unrelated ones. In practice
+  # that means shipping months-old logs from long-dead containers, which Loki
+  # rejects with HTTP 400 ("timestamp too old") and which buries this service's
+  # logs in noise. Discovery scoped by label is the correct boundary.
+  #
+  # Tradeoff, stated plainly: this needs the Docker socket, and read access to
+  # the socket is effectively root on the host. It is mounted read-only and is
+  # acceptable for a local stack. In Kubernetes this is not how it works at all
+  # -- Promtail runs as a DaemonSet using kubernetes_sd_configs with a
+  # ServiceAccount scoped to reading pods, and never sees a Docker socket.
+  - job_name: compose
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=devops-production-demo"]
+
+    relabel_configs:
+      # Compose service name is the useful label; the container name is
+      # derived from it and the container id is high-cardinality churn.
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+      - target_label: job
+        replacement: compose
+
+    pipeline_stages:
+      # The application already emits JSON, so the pipeline unwraps it and
+      # promotes only the fields worth indexing.
+      - json:
+          expressions:
+            level: level
+            event: event
+            request_id: request_id
+
+      # Only low-cardinality fields become Loki labels. `request_id` is
+      # extracted above so it stays queryable in the log line, but is
+      # deliberately NOT promoted to a label -- one stream per request is
+      # exactly how a Loki install falls over.
+      - labels:
+          level:
+          service:
+          stream:
+
+      # Belt and braces: anything older than the Loki ingestion window would
+      # be rejected with a 400 and retried forever. Dropping it here keeps the
+      # client from wedging on a backlog it can never deliver.
+      - drop:
+          older_than: 24h
+          drop_counter_reason: older_than_ingestion_window

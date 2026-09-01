@@ -1,0 +1,46 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: "Please do not paste real credentials, tokens or production hostnames."
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Observed behaviour, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. docker compose up -d
+        2. curl -X POST localhost:8080/api/v1/users -d '...'
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: request-id
+    attributes:
+      label: Request ID
+      description: The `x-request-id` response header. Every log line for that request carries it.
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where
+      options: [local (compose), dev, staging, production]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell

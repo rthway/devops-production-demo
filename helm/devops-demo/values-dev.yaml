@@ -1,0 +1,35 @@
+# Development: one replica, no autoscaling, small resources, docs enabled.
+replicaCount: 1
+
+config:
+  APP_ENVIRONMENT: dev
+  APP_LOG_LEVEL: DEBUG
+  APP_LOG_JSON: "false"
+  APP_METRICS_ENABLED: "true"
+  APP_MAX_PAGE_SIZE: "100"
+  APP_DB_POOL_SIZE: "2"
+  APP_DB_MAX_OVERFLOW: "3"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+
+# A single-replica deployment cannot satisfy minAvailable: 1 during a drain,
+# so enabling a PDB here would block node upgrades on the dev cluster.
+podDisruptionBudget:
+  enabled: false
+
+ingress:
+  enabled: true
+  hosts:
+    - host: api-dev.example.com
+      paths:
+        - path: /
+          pathType: Prefix

@@ -1,0 +1,197 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [Docker]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev, prod]
+        default: dev
+      image_tag:
+        description: "Immutable image tag to deploy (e.g. sha-<gitsha>). Never 'latest'."
+        required: true
+        type: string
+
+concurrency:
+  # Serialised per environment. Two concurrent deploys to the same environment
+  # race on the migration Job and on the rollout, and the loser wins.
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # dev deploys automatically on every green build of main.
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Never deploy the output of a failed build.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    environment:
+      name: dev
+      url: https://api-dev.example.com
+
+    permissions:
+      contents: read
+      # OIDC federation with the cloud provider. No long-lived AWS access key
+      # is stored as a repository secret -- the token is minted per run and
+      # expires in minutes.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: image
+        run: |
+          # Deploy an immutable reference. A mutable tag makes it impossible to
+          # know what is running and makes rollback meaningless.
+          tag="${{ github.event.inputs.image_tag || format('sha-{0}', github.sha) }}"
+          case "$tag" in
+            latest|*:latest)
+              echo "::error::Refusing to deploy a mutable 'latest' tag."
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ref=ghcr.io/${{ github.repository }}:$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: gha-deploy-dev-${{ github.run_id }}
+
+      - name: Set up kubectl and Helm
+        uses: azure/setup-helm@v4
+
+      - name: Deploy
+        run: |
+          helm upgrade --install devops-demo helm/devops-demo \
+            --namespace devops-demo --create-namespace \
+            -f helm/devops-demo/values-dev.yaml \
+            --set image.tag="${{ steps.image.outputs.tag }}" \
+            --atomic \
+            --timeout 10m \
+            --wait
+          # --atomic rolls the release back automatically if it does not
+          # become healthy inside the timeout, so a bad deploy self-heals
+          # instead of sitting broken until someone notices.
+
+      - name: Smoke test
+        run: |
+          kubectl -n devops-demo rollout status deployment/devops-demo --timeout=5m
+          kubectl -n devops-demo run smoke-${{ github.run_id }} \
+            --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+            curl -fsS http://devops-demo/health/ready
+
+  # ---------------------------------------------------------------------------
+  # prod requires a human. The `production` GitHub environment carries the
+  # required-reviewers rule; this job cannot start until someone approves it.
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    timeout-minutes: 30
+
+    # Only ever from main, and only for a tagged release or an explicit
+    # dispatch. A merge to main alone does not reach production.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v'))
+
+    environment:
+      name: production
+      url: https://api.example.com
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: image
+        run: |
+          tag="${{ github.event.inputs.image_tag || format('sha-{0}', github.sha) }}"
+          case "$tag" in
+            latest|*:latest)
+              echo "::error::Refusing to deploy a mutable 'latest' tag to production."
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: gha-deploy-prod-${{ github.run_id }}
+
+      - uses: azure/setup-helm@v4
+
+      - name: Record the current revision for rollback
+        id: current
+        run: |
+          # Captured BEFORE the upgrade. Working out what to roll back to
+          # during an incident is exactly the wrong time to be running
+          # `helm history`.
+          rev=$(helm -n devops-demo history devops-demo -o json \
+                | python -c 'import json,sys; print(json.load(sys.stdin)[-1]["revision"])' 2>/dev/null || echo 0)
+          echo "revision=$rev" >> "$GITHUB_OUTPUT"
+          echo "current revision: $rev"
+
+      - name: Deploy
+        run: |
+          helm upgrade --install devops-demo helm/devops-demo \
+            --namespace devops-demo --create-namespace \
+            -f helm/devops-demo/values-prod.yaml \
+            --set image.tag="${{ steps.image.outputs.tag }}" \
+            --atomic \
+            --timeout 15m \
+            --wait
+
+      - name: Verify
+        run: |
+          kubectl -n devops-demo rollout status deployment/devops-demo --timeout=10m
+          kubectl -n devops-demo run smoke-${{ github.run_id }} \
+            --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+            curl -fsS http://devops-demo/health/ready
+
+      - name: Roll back on failure
+        if: failure() && steps.current.outputs.revision != '0'
+        run: |
+          echo "::warning::Deployment failed. Rolling back to revision ${{ steps.current.outputs.revision }}."
+          helm -n devops-demo rollback devops-demo ${{ steps.current.outputs.revision }} --wait --timeout 10m
+          # Note: this rolls back the application, NOT the database migration.
+          # That is why migrations must be backwards compatible -- see
+          # INTERVIEW.md, "How would you perform a rollback?".
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Production deploy"
+            echo
+            echo "- image tag: \`${{ steps.image.outputs.tag }}\`"
+            echo "- previous revision: \`${{ steps.current.outputs.revision }}\`"
+            echo "- result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

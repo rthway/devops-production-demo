@@ -1,0 +1,119 @@
+# Defaults. Environment overlays live in values-dev.yaml / values-prod.yaml
+# and override only what actually differs, so a reviewer can see the delta.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/rthway/devops-production-demo
+  # Empty means "use .Chart.AppVersion". Never "latest": a Deployment on a
+  # mutable tag makes it impossible to tell what is actually running, and
+  # makes rollback meaningless.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  # The application never calls the Kubernetes API, so it does not need a
+  # token mounted where an attacker could find it.
+  automount: false
+  annotations: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Application configuration. Non-secret values only -- these become a
+# ConfigMap and are plainly visible to anything with read access.
+config:
+  APP_ENVIRONMENT: prod
+  APP_LOG_LEVEL: INFO
+  APP_LOG_JSON: "true"
+  APP_METRICS_ENABLED: "true"
+  APP_MAX_PAGE_SIZE: "100"
+  APP_DB_POOL_SIZE: "10"
+  APP_DB_MAX_OVERFLOW: "20"
+
+# The chart NEVER contains a secret value. It references a Secret that already
+# exists in the namespace, created by SOPS, Sealed Secrets, External Secrets
+# or out of band. A `helm get values` should never disclose a password.
+existingSecret: api-secrets
+
+migration:
+  # Runs `alembic upgrade head` as a pre-upgrade hook: once per release,
+  # rather than once per replica as an initContainer would.
+  enabled: true
+
+probes:
+  liveness:
+    path: /health/live
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /health/ready
+    periodSeconds: 5
+    failureThreshold: 3
+  startup:
+    path: /health/live
+    periodSeconds: 2
+    failureThreshold: 30
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
