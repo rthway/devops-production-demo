@@ -1,0 +1,53 @@
+# Alerts are written against symptoms users feel (errors, latency,
+# unavailability), not causes (CPU, memory). Cause-based alerts page someone
+# for a condition that may have no user impact at all.
+groups:
+  - name: api-availability
+    rules:
+      - alert: ApiDown
+        expr: up{job="api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API target is not being scraped"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for over 1 minute."
+
+      - alert: DatabaseUnreachable
+        expr: app_database_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Application cannot reach PostgreSQL"
+          description: "Readiness probes are failing; the pod is out of the Service."
+
+  - name: api-slos
+    rules:
+      # 5% of requests failing for 5 minutes. Rate over the same window on
+      # both sides so a low-traffic period cannot produce a divide-by-zero
+      # spike into a false page.
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_request_errors_total[5m]))
+            /
+          clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "5xx rate above 5%"
+          description: "Error ratio is {{ $value | humanizePercentage }} over 5m."
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency above the 250ms SLO"
+          description: "p95 is {{ $value }}s over the last 5 minutes."

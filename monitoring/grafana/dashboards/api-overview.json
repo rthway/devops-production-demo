@@ -1,0 +1,256 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "title": "API Overview - devops-production-demo",
+  "uid": "dpd-api-overview",
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["devops-production-demo", "api"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Service level indicators",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Availability (up)",
+      "description": "1 when Prometheus can scrape the API target.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "targets": [{ "expr": "up{job=\"api\"}", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Database reachable",
+      "description": "app_database_up is set by the readiness probe.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "targets": [{ "expr": "app_database_up", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "OK", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Requests / sec",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 5, "x": 8, "y": 1 },
+      "targets": [{ "expr": "sum(rate(http_requests_total[5m]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Error rate (5xx)",
+      "description": "Alert fires above 5% for 5 minutes.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 5, "x": 13, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_request_errors_total[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency",
+      "description": "SLO: under 250ms.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.25 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "row",
+      "title": "Traffic and latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per second by route",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "sum by (path, method) (rate(http_requests_total[5m]))",
+          "legendFormat": "{{method}} {{path}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency percentiles",
+      "description": "p50 / p95 / p99 from the request duration histogram.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Responses by status class",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(http_requests_total[5m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "In-flight requests",
+      "description": "Saturation signal: a rising floor here means workers are not keeping up.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "targets": [{ "expr": "http_requests_in_progress", "legendFormat": "in flight", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 15 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Container resources",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Process CPU",
+      "description": "From prometheus_client's default process collector.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
+      "targets": [
+        { "expr": "rate(process_cpu_seconds_total{job=\"api\"}[5m])", "legendFormat": "cpu cores", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Process resident memory",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 23 },
+      "targets": [
+        { "expr": "process_resident_memory_bytes{job=\"api\"}", "legendFormat": "rss", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Open file descriptors",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 23 },
+      "targets": [
+        { "expr": "process_open_fds{job=\"api\"}", "legendFormat": "open fds", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "logs",
+      "title": "Application logs (Loki)",
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 31 },
+      "targets": [{ "expr": "{job=\"containerlogs\"} |= \"\"", "refId": "A" }],
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true }
+    }
+  ],
+  "schemaVersion": 39
+}

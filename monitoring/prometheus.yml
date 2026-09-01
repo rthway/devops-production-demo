@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local
+    service: devops-production-demo
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrapes the API container directly on the backend network rather than
+  # through nginx, so /metrics never needs to be publicly routable.
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: devops-production-demo
