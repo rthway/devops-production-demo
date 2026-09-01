@@ -1,0 +1,90 @@
+# Default deny, then allow only the flows that must exist. Without the first
+# policy every pod in the namespace can reach every other pod and the internet
+# -- which is the Kubernetes default and is not a security posture.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: devops-demo
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-allow
+  namespace: devops-demo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: devops-production-demo
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Public traffic arrives only via the ingress controller.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Prometheus scrapes /metrics directly, which is why it never needs to be
+    # routable from the Ingress.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # DNS. Forgetting this is the single most common way a default-deny
+    # policy breaks an application in a way that looks like a hung app
+    # rather than a network problem.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: database
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow
+  namespace: devops-demo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only the application and the migration Job may open a connection.
+    # Nothing else in the namespace can reach the database at all.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: devops-production-demo
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53

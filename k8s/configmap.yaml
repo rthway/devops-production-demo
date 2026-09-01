@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: devops-demo
+  labels:
+    app.kubernetes.io/name: devops-production-demo
+    app.kubernetes.io/component: api
+# Non-secret configuration only. The database URL contains a password and
+# therefore lives in a Secret, never here -- a ConfigMap is readable by
+# anything with get on the namespace and is dumped in plain text by
+# `kubectl describe`.
+data:
+  APP_ENVIRONMENT: "prod"
+  APP_LOG_LEVEL: "INFO"
+  APP_LOG_JSON: "true"
+  APP_METRICS_ENABLED: "true"
+  APP_MAX_PAGE_SIZE: "100"
+  APP_DB_POOL_SIZE: "10"
+  APP_DB_MAX_OVERFLOW: "20"

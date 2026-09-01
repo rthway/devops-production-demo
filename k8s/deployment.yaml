@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: devops-demo
+  labels:
+    app.kubernetes.io/name: devops-production-demo
+    app.kubernetes.io/component: api
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # maxUnavailable 0 means capacity never dips below the current replica
+      # count during a rollout: new pods must pass readiness before old ones
+      # are removed. Costs one extra pod's worth of resources for the length
+      # of the rollout, which is the right trade for a request-serving tier.
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devops-production-demo
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: devops-production-demo
+        app.kubernetes.io/component: api
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        # Prometheus discovers the pod directly. /metrics is never exposed
+        # through the Ingress -- it leaks route names, traffic volume and
+        # latency to anyone who can reach the public endpoint.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: api
+      automountServiceAccountToken: false
+
+      # Pod-level security context. Every field here is also required by the
+      # `restricted` Pod Security Standard enforced on the namespace.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Spread replicas across nodes. `ScheduleAnyway` rather than
+      # `DoNotSchedule`: on a single-node dev cluster a hard constraint would
+      # leave the second replica Pending forever, and an unschedulable pod is
+      # worse than an imperfectly spread one.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: devops-production-demo
+              app.kubernetes.io/component: api
+
+      # Give in-flight requests time to finish before SIGKILL. Uvicorn stops
+      # accepting new connections on SIGTERM and drains the rest.
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: api
+          # Pinned by tag here for readability; CI patches this to the
+          # immutable sha-<gitsha> tag at deploy time. `latest` in a
+          # Deployment means you cannot tell what is actually running.
+          image: ghcr.io/rthway/devops-production-demo:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secrets
+
+          # Migrations are NOT run here. With 2+ replicas every pod would race
+          # to migrate the same database on every rollout. See migration-job.yaml.
+          env:
+            - name: RUN_MIGRATIONS
+              value: "false"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          # --- probes ---------------------------------------------------
+          # startup: gives a slow first boot up to 30 x 2s = 60s without the
+          # liveness probe killing it, while keeping liveness itself fast.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+
+          # liveness: deliberately does NOT touch PostgreSQL. If it did, a
+          # database failover would restart every replica simultaneously and
+          # turn a recoverable dependency outage into a full outage.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # readiness: DOES check the database. A pod that cannot serve is
+          # pulled from the Service endpoints without being killed, so it can
+          # rejoin the moment the dependency recovers.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+
+          # --- resources ------------------------------------------------
+          # Requests drive scheduling; limits cap the blast radius of a leak.
+          # Both are set, so the pod lands in Burstable QoS and the scheduler
+          # has real numbers to bin-pack with. A memory limit without a
+          # request is how pods get evicted at random under node pressure.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
+
+          # readOnlyRootFilesystem means anything that needs to write needs an
+          # explicit, size-bounded mount. /tmp is all this process needs.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
