@@ -1,0 +1,19 @@
+apiVersion: v2
+name: devops-demo
+description: Production-shaped FastAPI service with PostgreSQL, autoscaling and observability
+type: application
+
+# version  = the chart's own version, bumped when templates change.
+# appVersion = the application version, used as the default image tag.
+# They move independently on purpose: a values-only fix should not imply a
+# new application release, and vice versa.
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords: [fastapi, python, postgresql, devops, kubernetes]
+home: https://github.com/rthway/devops-production-demo
+sources:
+  - https://github.com/rthway/devops-production-demo
+maintainers:
+  - name: Roshan Kumar Thapa
+    url: https://github.com/rthway

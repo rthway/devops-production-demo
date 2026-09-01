@@ -1,0 +1,60 @@
+# Production: three replicas, autoscaling, TLS, stricter limits.
+replicaCount: 3
+
+config:
+  APP_ENVIRONMENT: prod
+  APP_LOG_LEVEL: INFO
+  APP_LOG_JSON: "true"
+  APP_METRICS_ENABLED: "true"
+  APP_MAX_PAGE_SIZE: "100"
+  APP_DB_POOL_SIZE: "20"
+  APP_DB_MAX_OVERFLOW: "30"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+  hosts:
+    - host: api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: api-tls
+      hosts:
+        - api.example.com
+
+# Keep replicas off the same node so a single node failure cannot take the
+# whole service down.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: devops-demo
