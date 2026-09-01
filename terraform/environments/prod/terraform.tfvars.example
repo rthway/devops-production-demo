@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars (gitignored) or pass with -var.
+# No secrets belong in this file: the database password is generated in-
+# provider and stored in Secrets Manager, never supplied as an input.
+aws_region      = "ap-south-1"
+container_image = "ghcr.io/rthway/devops-production-demo:sha-REPLACE"
