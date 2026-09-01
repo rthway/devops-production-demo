@@ -1,0 +1,20 @@
+# hadolint configuration.
+#
+# Only one rule is ignored, and it is a deliberate trade rather than a
+# convenience.
+ignored:
+  # DL3008 -- "pin versions in apt-get install".
+  #
+  # Sound advice in general, and wrong for a Debian base image. Debian's
+  # stable repositories keep exactly one version of each package: when a
+  # security update lands, the previous version is REMOVED from the mirror.
+  # A pinned `libpq5=15.4-1` therefore turns into a hard build failure the
+  # first time Debian publishes a fix -- precisely when you most need to
+  # rebuild.
+  #
+  # Reproducibility is instead pinned where it actually holds: the base image
+  # is a specific tag, Python dependencies are constrained in pyproject.toml,
+  # pip/setuptools/wheel are pinned exactly, and the built image is scanned by
+  # Trivy on every push and weekly on a schedule. That combination catches a
+  # vulnerable OS package; a version pin only freezes one.
+  - DL3008
